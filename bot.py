@@ -1,141 +1,161 @@
-import sys
-from telegram import (
-    Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
-)
-from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler,
-    MessageHandler, filters, ContextTypes, ConversationHandler
-)
+import logging
+import random
+from aiogram import Bot, Dispatcher, executor, types
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.dispatcher.filters import Command
 
-TOKEN = "7894143384:AAGgSoRwwCqxIWJNc4o202MgAffwqznPOXk"
-OWNER_ID = 1079698307  # Replace this with your real Telegram user ID
+API_TOKEN = '7894143384:AAGgSoRwwCqxIWJNc4o202MgAffwqznPOXk'
 
-# Sectoral attack groups (Roulette style)
-SECTORS = [
-    [9, 31, 14, 20, 1, 17, 34, 6],
-    [26, 0, 32, 8, 23, 10, 5, 24],
-    [15, 19, 24, 21, 2, 25],
-    [12, 28, 7, 29, 18, 22],
-]
+logging.basicConfig(level=logging.INFO)
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher(bot)
 
-# Number color codes
-COLOR_MAP = {
-    0: "🟩",  # Green
-    # Reds
-    1: "🟥", 3: "🟥", 5: "🟥", 7: "🟥", 9: "🟥", 12: "🟥", 14: "🟥",
-    16: "🟥", 18: "🟥", 19: "🟥", 21: "🟥", 23: "🟥", 25: "🟥", 27: "🟥",
-    30: "🟥", 32: "🟥", 34: "🟥", 36: "🟥",
-    # Blacks (the rest 1–36)
-    **{n: "⬛" for n in range(1, 37) if n not in [
-        1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23,
-        25, 27, 30, 32, 34, 36
-    ]}
+# Attack definitions
+SECTORS = {
+    "Left 6":     [22, 18, 29, 7, 28, 12],
+    "Right 6":    [15, 19, 4, 21, 2, 25],
+    "Vertical":   [0, 5, 8, 10, 23, 24, 26, 32],
+    "Orfelins":   [1, 6, 9, 14, 17, 20, 31, 34],
+    "Two Towers": [27, 30, 36, 28, 7, 12, 11, 13]
 }
 
-# Conversation states
-ASK_COUNT, ASK_NUMBERS = range(2)
-user_attack_count = {}
+EURO_ORDER = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30,
+              8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7,
+              28, 12, 35, 3, 26]
 
-# --- Commands and Handlers ---
+SIXTEEN_NUMBERS = [0, 1, 2, 3, 10, 11, 12, 13,
+                   20, 21, 22, 23, 30, 31, 32, 33]
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("Attack", callback_data="attack")],
-        [InlineKeyboardButton("About", callback_data="about")]
-    ]
-    await update.message.reply_text("Choose an option:", reply_markup=InlineKeyboardMarkup(keyboard))
+# Emoji coloring
+RED_NUMBERS = {1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36}
+BLACK_NUMBERS = {2,4,6,8,10,11,13,15,17,20,22,24,26,28,29,31,33,35}
 
-async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    await update.callback_query.edit_message_text("This bot is a special tool to only use...")
+def color_number(n):
+    if n == 0:
+        return "🟩 0"
+    if n in RED_NUMBERS:
+        return f"🟥 {n}"
+    return f"⬛️ {n}"
 
-async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    keyboard = [
-        [InlineKeyboardButton("Sectoral", callback_data="sectoral")],
-        [InlineKeyboardButton("Other", callback_data="other")]
-    ]
-    await update.callback_query.edit_message_text("Choose an attack type:", reply_markup=InlineKeyboardMarkup(keyboard))
+def format_attack(title, numbers):
+    return f"\u2728 {title}\nPut on: " + ", ".join([color_number(n) for n in numbers])
 
-async def other(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    await update.callback_query.edit_message_text("Unfortunately this feature is still in development.")
+def pick_sectoral_attack(user_numbers):
+    eligible = {}
+    for name, nums in SECTORS.items():
+        count = len(set(user_numbers) & set(nums))
+        if 4 <= count <= 15:
+            eligible[name] = count
+    if not eligible:
+        return None
+    sector_names = list(eligible.keys())
+    weights = list(eligible.values())
+    chosen = random.choices(sector_names, weights=weights, k=1)[0]
+    return (f"Sectoral: {chosen}", SECTORS[chosen])
 
-async def shutdown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != OWNER_ID:
-        await update.message.reply_text("🚫 You are not authorized to shut me down.")
+def pick_3_side_by_side(user_numbers):
+    user_set = set(user_numbers)
+    candidates = []
+    for i in range(len(EURO_ORDER) - 2):
+        triplet = EURO_ORDER[i:i+3]
+        if all(n in user_set for n in triplet):
+            before = EURO_ORDER[i-1] if i > 0 else None
+            after = EURO_ORDER[i+3] if i + 3 < len(EURO_ORDER) else None
+            full = ([before] if before is not None else []) + triplet + ([after] if after is not None else [])
+            candidates.append(full)
+    if not candidates:
+        return None
+    return ("3 Side by Side", random.choice(candidates))
+
+def should_trigger_16_numbers(user_numbers):
+    recent = user_numbers[-10:]
+    trigger_set = set(SIXTEEN_NUMBERS)
+    for i in range(len(user_numbers) - 10, len(user_numbers)):
+        if user_numbers[i] in trigger_set:
+            for j in range(i + 4, len(user_numbers)):
+                if user_numbers[j] in trigger_set:
+                    return True
+    return False
+
+# Session memory
+user_sessions = {}
+
+@dp.message_handler(commands=['start'])
+async def start_cmd(message: types.Message):
+    user_sessions[message.from_user.id] = {}
+    await message.answer("Send a list of numbers (between 20 and 50, comma-separated):")
+
+@dp.message_handler()
+async def handle_numbers(message: types.Message):
+    user_id = message.from_user.id
+    if user_id not in user_sessions:
+        user_sessions[user_id] = {}
+
+    session = user_sessions[user_id]
+
+    # If we are waiting for attack result
+    if session.get("awaiting_attack"):
+        try:
+            new_number = int(message.text.strip())
+            session["inputs"].append(new_number)
+            if new_number in session["attack_numbers"]:
+                limit = session["limit"]
+                if len(session["inputs"]) <= limit:
+                    await message.answer(f"✅ You won! It took you {len(session['inputs'])} numbers.")
+                else:
+                    await message.answer(f"❌ Number appeared after {limit} draws. You lost.")
+                session.clear()
+            else:
+                await message.answer("...waiting for a win...")
+        except ValueError:
+            await message.reply("Send a valid number.")
         return
 
-    await update.message.reply_text("Shutting down... 🛑")
-    await context.bot.close()
-    await context.application.shutdown()
-    sys.exit()
-
-async def sectoral(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    await update.callback_query.edit_message_text("How many attacks? (1 to 4)")
-    return ASK_COUNT
-
-async def ask_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Otherwise, treat as list
     try:
-        n = int(update.message.text)
-        if n < 1 or n > 4:
-            raise ValueError()
-        user_attack_count[update.effective_chat.id] = n
-        await update.message.reply_text(f"Send {n} number(s), separated by space (e.g. 9 14 20)")
-        return ASK_NUMBERS
-    except ValueError:
-        await update.message.reply_text("Please enter a valid number between 1 and 4.")
-        return ASK_COUNT
+        user_numbers = [int(n.strip()) for n in message.text.split(',') if n.strip().isdigit()]
+        if not (20 <= len(user_numbers) <= 50):
+            await message.reply("Please send between 20 and 50 numbers.")
+            return
 
-async def receive_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        nums = list(map(int, update.message.text.strip().split()))
-        n = user_attack_count.get(update.effective_chat.id, 0)
-        if len(nums) != n:
-            await update.message.reply_text(f"You need to send exactly {n} number(s).")
-            return ASK_NUMBERS
+        attacks = []
 
-        messages = []
-        for num in nums:
-            for sector in SECTORS:
-                if num in sector:
-                    colored = [f"{COLOR_MAP.get(x, '❓')} {x}" for x in sector]
-                    messages.append(f"Put on: {' | '.join(colored)}")
-                    break
-        await update.message.reply_text("\n\n".join(messages), reply_markup=ReplyKeyboardRemove())
-        return ConversationHandler.END
-    except Exception:
-        await update.message.reply_text("Something went wrong. Please try again.")
-        return ConversationHandler.END
+        sec = pick_sectoral_attack(user_numbers)
+        if sec:
+            attacks.append(sec)
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Cancelled.", reply_markup=ReplyKeyboardRemove())
-    return ConversationHandler.END
+        sbs = pick_3_side_by_side(user_numbers)
+        if sbs:
+            attacks.append(sbs)
 
-# --- Set up the bot ---
-app = Application.builder().token(TOKEN).build()
+        if should_trigger_16_numbers(user_numbers):
+            attacks.append(("16 Numbers", SIXTEEN_NUMBERS))
 
-# Handlers
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("shutdown", shutdown_command))
-app.add_handler(CommandHandler("sd", shutdown_command))
+        if len(attacks) < 2:
+            await message.reply("Not enough attack patterns found. Try different numbers.")
+            return
 
-app.add_handler(CallbackQueryHandler(about, pattern="^about$"))
-app.add_handler(CallbackQueryHandler(attack, pattern="^attack$"))
-app.add_handler(CallbackQueryHandler(sectoral, pattern="^sectoral$"))
-app.add_handler(CallbackQueryHandler(other, pattern="^other$"))
+        chosen = random.sample(attacks, 2)
 
-conv_handler = ConversationHandler(
-    entry_points=[CallbackQueryHandler(sectoral, pattern="^sectoral$")],
-    states={
-        ASK_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_numbers)],
-        ASK_NUMBERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_numbers)],
-    },
-    fallbacks=[CommandHandler("cancel", cancel)],
-)
-app.add_handler(conv_handler)
+        for title, nums in chosen:
+            await message.answer(format_attack(title, nums))
+            # Now track one of the attacks
+            session.clear()
+            session["awaiting_attack"] = True
+            session["attack_title"] = title
+            session["attack_numbers"] = nums
+            session["inputs"] = []
+            if "Sectoral" in title:
+                session["limit"] = 11 if len(nums) == 6 else 8
+            elif "3 Side" in title:
+                session["limit"] = 13
+            elif "16 Numbers" in title:
+                session["limit"] = 3
+            await message.answer("Now enter numbers one by one until you win or lose.")
+            break  # Track only one attack
 
-# Run the bot
-app.run_polling()
+    except Exception as e:
+        await message.reply(f"Error: {e}")
+
+if __name__ == '__main__':
+    executor.start_polling(dp, skip_updates=True)
