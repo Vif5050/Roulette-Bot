@@ -1,6 +1,6 @@
 import sys
 from telegram import (
-    Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
+    Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 )
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -8,9 +8,9 @@ from telegram.ext import (
 )
 
 TOKEN = "7894143384:AAGgSoRwwCqxIWJNc4o202MgAffwqznPOXk"
-OWNER_ID = 1079698307  # replace with your actual Telegram user ID
+OWNER_ID = 1079698307  # Replace this with your real Telegram user ID
 
-# Lists of numbers (Roulette layout)
+# Sectoral attack groups (Roulette style)
 SECTORS = [
     [9, 31, 14, 20, 1, 17, 34, 6],
     [26, 0, 32, 8, 23, 10, 5, 24],
@@ -18,24 +18,26 @@ SECTORS = [
     [12, 28, 7, 29, 18, 22],
 ]
 
-# States
-ASK_COUNT, ASK_NUMBERS = range(2)
-
-# Emoji map (red/black/green)
+# Number color codes
 COLOR_MAP = {
-    0: "🟩",
+    0: "🟩",  # Green
     # Reds
     1: "🟥", 3: "🟥", 5: "🟥", 7: "🟥", 9: "🟥", 12: "🟥", 14: "🟥",
     16: "🟥", 18: "🟥", 19: "🟥", 21: "🟥", 23: "🟥", 25: "🟥", 27: "🟥",
     30: "🟥", 32: "🟥", 34: "🟥", 36: "🟥",
-    # Blacks
-    **{n: "⬛" for n in range(1, 37) if n not in [0, 1, 3, 5, 7, 9, 12, 14, 16, 18,
-                                                19, 21, 23, 25, 27, 30, 32, 34, 36]}
+    # Blacks (the rest 1–36)
+    **{n: "⬛" for n in range(1, 37) if n not in [
+        1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23,
+        25, 27, 30, 32, 34, 36
+    ]}
 }
 
+# Conversation states
+ASK_COUNT, ASK_NUMBERS = range(2)
 user_attack_count = {}
 
-# Handlers
+# --- Commands and Handlers ---
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("Attack", callback_data="attack")],
@@ -57,22 +59,15 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def other(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    keyboard = [[InlineKeyboardButton("Shutdown Bot", callback_data="shutdown")]]
-    await update.callback_query.edit_message_text(
-        "Unfortunately this feature is still in development.",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await update.callback_query.edit_message_text("Unfortunately this feature is still in development.")
 
-async def shutdown(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-
+async def shutdown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     if user_id != OWNER_ID:
-        await query.answer("🚫 Not authorized.")
+        await update.message.reply_text("🚫 You are not authorized to shut me down.")
         return
 
-    await query.answer()
-    await query.edit_message_text("Shutting down... 🛑")
+    await update.message.reply_text("Shutting down... 🛑")
     await context.bot.close()
     await context.application.shutdown()
     sys.exit()
@@ -103,11 +98,11 @@ async def receive_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return ASK_NUMBERS
 
         messages = []
-        for i, num in enumerate(nums):
+        for num in nums:
             for sector in SECTORS:
                 if num in sector:
-                    color_list = [f"{COLOR_MAP.get(x, '❓')} {x}" for x in sector]
-                    messages.append(f"Put on: {' | '.join(color_list)}")
+                    colored = [f"{COLOR_MAP.get(x, '❓')} {x}" for x in sector]
+                    messages.append(f"Put on: {' | '.join(colored)}")
                     break
         await update.message.reply_text("\n\n".join(messages), reply_markup=ReplyKeyboardRemove())
         return ConversationHandler.END
@@ -119,20 +114,19 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Cancelled.", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
-# Set up app
+# --- Set up the bot ---
 app = Application.builder().token(TOKEN).build()
 
-# Command handler
+# Handlers
 app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("shutdown", shutdown_command))
+app.add_handler(CommandHandler("sd", shutdown_command))
 
-# Callback buttons
 app.add_handler(CallbackQueryHandler(about, pattern="^about$"))
 app.add_handler(CallbackQueryHandler(attack, pattern="^attack$"))
 app.add_handler(CallbackQueryHandler(sectoral, pattern="^sectoral$"))
 app.add_handler(CallbackQueryHandler(other, pattern="^other$"))
-app.add_handler(CallbackQueryHandler(shutdown, pattern="^shutdown$"))
 
-# Conversation for Sectoral input
 conv_handler = ConversationHandler(
     entry_points=[CallbackQueryHandler(sectoral, pattern="^sectoral$")],
     states={
@@ -141,7 +135,6 @@ conv_handler = ConversationHandler(
     },
     fallbacks=[CommandHandler("cancel", cancel)],
 )
-
 app.add_handler(conv_handler)
 
 # Run the bot
