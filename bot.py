@@ -4,6 +4,25 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler,
     ConversationHandler, filters, ContextTypes
 )
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
+import sys
+
+# Replace with your Telegram user ID for security
+OWNER_ID = 1079698307  # ← Replace with your real Telegram ID!
+
+async def shutdown(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("🚫 You are not authorized to stop me.")
+        return
+
+    await update.message.reply_text("Shutting down... 🛑")
+    await context.bot.close()
+    await context.application.shutdown()
+    sys.exit()
+
+# Register the handler
+app.add_handler(CommandHandler("shutdown", shutdown))
 
 SELECTING_ATTACK_COUNT, ENTERING_NUMBERS = range(2)
 
